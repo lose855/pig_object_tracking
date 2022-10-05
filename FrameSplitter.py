@@ -1,11 +1,14 @@
 import cv2
 import os
+import threading
 class FrameSplitter:
     def __init__(self):
         self.outputPath = './images'
-        self.outputName = '/image_%d'
+        self.outputName = '/%d_image_%d' # video number + count number
         self.outputFormat = '.jpg'
         self.inputPath = './videos/'
+        self.captureSize = 640
+        self.operations = []
         try: # make input, output images directory
             if not os.path.exists(self.outputPath):
                 os.makedirs(self.outputPath)
@@ -22,20 +25,35 @@ class FrameSplitter:
             exit()
         return video
 
+    def splitter(self, index, fileName, video): # frame splitter
+        count = 0 # for image numbering
+        fps = video.get(cv2.CAP_PROP_FPS)  # get fps
+        while True:
+            ret, image = video.read()
+            if not ret:
+                self.operations.append(1)
+                break
+            if (int(video.get(1)) % round(fps) == 0):  # split using frame rate
+                image = cv2.resize(image, (640, 640))  # reducing image size (1920, 1080) -> (640, 640)
+                cv2.imwrite(self.outputPath + self.outputName % (index, count) + self.outputFormat, image)
+                print('Video : %s saved image number : %d\n' % (fileName, count))
+                count += 1
+        video.release()
+
     def run(self):
         inputList = os.listdir(self.inputPath) # read videos list
+        totalVideos = len(inputList)
+        print("Detected %d videos"%(totalVideos))
         if len(inputList) == 0: raise RuntimeError(" Input videos list is empty please check again")
-        count = 0  # for image numbering
-        for dir in inputList:
+        for idx, dir in enumerate(inputList):
             video = self.load(dir)
-            fps = video.get(cv2.CAP_PROP_FPS) # fps
-            while (video.isOpened()):
-                ret, image = video.read()
-                if (int(video.get(1)) % round(fps) == 0):  # split using frame rate
-                    cv2.imwrite(self.outputPath + self.outputName%(count) + self.outputFormat, image)
-                    print('Saved image number :', count)
-                    count += 1
-            video.release()
+            worker = threading.Thread(target=self.splitter, args=(idx, dir, video))
+            worker.daemon = True
+            worker.start()
+        while True: # worker checking
+            if len(self.operations) == 13: break # if all worker are finished
+        print('Videos: %d was finished'%(totalVideos))
+
 
 main = FrameSplitter()
 main.run()
