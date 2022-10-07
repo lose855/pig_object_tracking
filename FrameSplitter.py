@@ -53,7 +53,3 @@ class FrameSplitter:
         while True: # worker checking
             if len(self.operations) == 13: break # if all worker are finished
         print('Videos: %d was finished'%(totalVideos))
-
-
-main = FrameSplitter()
-main.run()
