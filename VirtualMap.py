@@ -24,6 +24,7 @@ class VirtualMap:
                 coordinate = contours[objectIndex]
                 epsilon = 0.05 * cv2.arcLength(coordinate, True)
                 coordinate = cv2.approxPolyDP(coordinate, epsilon, True)
+
                 moment = cv2.moments(coordinate)
                 x = int(moment['m10'] / moment['m00'])
                 y = int(moment['m01'] / moment['m00'])
