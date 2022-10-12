@@ -1,2 +1,2 @@
-python train.py --img 640 --batch 16 --epochs 500 --data data.yaml --weights yolov5l.pt --cache ram
+python train.py --img 640 --batch 16 --epochs 500 --data data.yaml --weights model.pt --cache ram
 --cache ram
