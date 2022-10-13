@@ -17,7 +17,7 @@ class FrameSplitter:
         except OSError:
             print('Error: Creating directory. ' + self.outputPath)
 
-    def load(self, dir): #
+    def Load(self, dir): #
         dir = self.inputPath + dir
         video = cv2.VideoCapture(dir)
         if not video.isOpened():
@@ -25,8 +25,8 @@ class FrameSplitter:
             exit()
         return video
 
-    def splitter(self, index, fileName, video): # frame splitter
-        count = 0 # for image numbering
+    def Splitter(self, index, fileName, video): # frame splitter
+        count = 13 # for image numbering
         fps = video.get(cv2.CAP_PROP_FPS)  # get fps
         while True:
             ret, image = video.read()
@@ -40,14 +40,14 @@ class FrameSplitter:
                 count += 1
         video.release()
 
-    def run(self):
+    def Run(self):
         inputList = os.listdir(self.inputPath) # read videos list
         totalVideos = len(inputList)
         print("Detected %d videos"%(totalVideos))
         if len(inputList) == 0: raise RuntimeError(" Input videos list is empty please check again")
         for idx, dir in enumerate(inputList):
-            video = self.load(dir)
-            worker = threading.Thread(target=self.splitter, args=(idx, dir, video))
+            video = self.Load(dir)
+            worker = threading.Thread(target=self.Splitter, args=(idx, dir, video))
             worker.daemon = True
             worker.start()
         while True: # worker checking
