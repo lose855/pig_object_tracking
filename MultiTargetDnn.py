@@ -26,6 +26,12 @@ class MultiTargetDnn:
         torch.cuda.manual_seed(seed) #
         torch.backends.cudnn.deterministic = True #
 
+        self.preprocess = transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
         self.encoder = torch.hub.load('pytorch/vision:v0.10.0', 'resnet152', pretrained=True) # Load Encoder
         self.encoder.to('cuda') # Use cuda
         self.self.drop = nn.Dropout(0.5)
@@ -39,15 +45,11 @@ class MultiTargetDnn:
 
 
 image = Image.open('img.jpg')
-preprocess = transforms.Compose([
-    transforms.Resize(256),
-    transforms.CenterCrop(224),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
-testTensor = preprocess(image)
-encoder = torch.hub.load('pytorch/vision:v0.10.0', 'resnet152', pretrained=True)  # Load Encoder
+
+testTensor = preprocess(image).to('cuda')
+testTensor = torch.unsqueeze(testTensor, 0)
+encoder = torch.hub.load('pytorch/vision:v0.10.0', 'resnet152', weights='IMAGENET1K_V2')  # Load Encoder
 encoder.to('cuda')  # Use cuda
 encoder.eval()
 result = encoder(testTensor)
-print(result[0])
+print(result[0].shape)
