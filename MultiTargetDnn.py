@@ -193,4 +193,4 @@ class Annotator: # Make dataset by hand
 # result = encoder(testTensor)
 # print(result[0].shape)
 
-annotator = Annotator('overlapping')
+annotator = Annotator('notoverlapping')
