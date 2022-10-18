@@ -5,6 +5,9 @@ import os
 class Detector:
     def __init__(self):
         self.model = torch.hub.load('ultralytics/yolov5', 'custom', path='model.pt')
+        self.model.agnostic = True # Overlap remove
+        self.model.hide_labels = True
+        self.model.hide_conf = True
         self.imagePath = './images'
         self.overlappingPath = './overlapping'
         self.notoverlappingPath = './notoverlapping'
@@ -31,8 +34,9 @@ class Detector:
         totalImages = len(inputList)
         print("Detected: %d images"%(totalImages))
         for page, image in enumerate(inputList):
-            print("Left %d images"%(totalImages-page))
-            image = cv2.imread(self.imagePath+'/'+image, iou_thres=0.8)
+            # print("Left %d images"%(totalImages-page))
+            image = cv2.imread(self.imagePath+'/'+image)
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             results = self.model(image)
             crops = results.crop(save=False)
             # box : x1, y1, x2, y2
@@ -45,12 +49,18 @@ class Detector:
                                      int(oCrop['box'][2].item()), int(oCrop['box'][3].item()) # Other box coordinate
                     intersectionX = min(mx2, ox2) - max(mx1, ox1)
                     intersectionY = min(my2, oy2) - max(my1, oy1)
-                    if intersectionX > 0.3 and intersectionY > 0.3:
-                        cv2.imwrite(self.overlappingPath+'/img_%d.jpg' % (countOverlap), mCrop['im'])
+                    if intersectionX > 0.5 and intersectionY > 0.5:
+                        if mx1>ox1 or my1>oy1:
+                            cropped = image[oy1:my2, ox1:mx2]
+                        else:
+                            cropped = image[my1:oy2, mx1:ox2]
+                        print(countOverlap, "M: %d %d %d %d  O: %d %d %d %d"%( mx1, my1, mx2, my2, ox1, oy1, ox2, oy2))
+                        cv2.imwrite(self.overlappingPath+'/img_%d.jpg' % (countOverlap), cropped)
                         countOverlap += 1
                         continue
                     elif intersectionX < 0 and intersectionY < 0:
-                        cv2.imwrite(self.notoverlappingPath + '/img_%d.jpg' % (count), mCrop['im'])
+                        cropped = image[my1:my2, mx1:mx2]
+                        cv2.imwrite(self.notoverlappingPath + '/img_%d.jpg' % (count), cropped)
                         count += 1
 
 detector = Detector()
