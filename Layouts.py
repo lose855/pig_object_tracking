@@ -4,11 +4,13 @@ class Layout:
         x,y = 0,1 # Position index
         #Basis
         self.fps = 30
-        self.width = 1240
+        self.width = 1300
         self.height = 720
         self.resize = 640
         self.edit1Idx = 1
         self.edit2Idx = 2
+        self.img1Idx = (30, 40)
+        self.img2Idx = (600, 40)
         #Contorls
         #Mousecode
         self.leftButton = 1
