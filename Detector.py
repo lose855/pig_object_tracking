@@ -36,7 +36,6 @@ class Detector:
         for page, image in enumerate(inputList):
             # print("Left %d images"%(totalImages-page))
             image = cv2.imread(self.imagePath+'/'+image)
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             results = self.model(image)
             crops = results.crop(save=False)
             # box : x1, y1, x2, y2

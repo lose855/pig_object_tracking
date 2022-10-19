@@ -142,6 +142,7 @@ class Annotator: # Make dataset by hand
                             if not overlapNumval == '':
                                 if len(self.coordList) < int(overlapNumval):
                                     self.coordList.append(pos)
+
                     if event.button == self.layout.centerButton: # Center button
                         resultName = "/%d.txt"%(self.index)
                         if len(self.coordList) == 0:

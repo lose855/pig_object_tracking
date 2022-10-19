@@ -15,6 +15,7 @@ class Layout:
         #Mousecode
         self.leftButton = 1
         self.centerButton = 2
+        self.rightButton = 3
         self.backWheel = 5
         self.upWheel = 4
         #Colors
