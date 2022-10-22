@@ -1,25 +1,170 @@
 import torch
 import torch.nn as nn
-from torchvision.models import *
-from PIL import Image
-import cv2
-import json
-from Layouts import Layout
-import sys
-import pygame
-from pygame.locals import *
 from torchvision import transforms
+from PIL import Image
+from torch.utils.data import DataLoader
+import pytorch_msssim
 import os
+import util
+from torchvision.utils import save_image
+import warnings
+import torch.nn.functional as F
 import numpy as np
-import time
 import random
 import torch.optim as optim
 import keyboard
-import joblib
-import torch.nn.functional as F
+import sys
 from torch.utils.tensorboard import SummaryWriter
 
+# Remove warning
+# warnings.filterwarnings(action='ignore')
+np.set_printoptions(threshold=sys.maxsize)
+# Detect NaN, Inf by autograd
+torch.autograd.set_detect_anomaly(True)
+
 class MultiTargetDnn:
+
+    # Define MSSIM loss function for binary image
+    class MSSSIM(torch.nn.Module):
+        def __init__(self, windowSize=11, sizeAverage=True, valRange=1):
+            super().__init__()
+            self.windowSize = windowSize
+            self.sizeAverage = sizeAverage
+            # Max value sigmoid : 1, tanh: 2
+            self.valRange = valRange
+
+        def msssim(self, img1, img2, windowSize=11, sizeAverage=True, valRange=None, normalize=None):
+            device = img1.device
+            weights = torch.FloatTensor([0.0448, 0.2856, 0.3001, 0.2363, 0.1333]).to(device)
+            levels = weights.size()[0]
+            ssims = []
+            mcs = []
+            for _ in range(levels):
+                sim, cs = pytorch_msssim.ssim(img1, img2, window_size=windowSize, size_average=sizeAverage, full=True,
+                               val_range=valRange)
+                # Relu normalize (not compliant with original definition)
+                if normalize == "relu":
+                    ssims.append(torch.relu(sim))
+                    mcs.append(torch.relu(cs))
+                else:
+                    ssims.append(sim)
+                    mcs.append(cs)
+
+                img1 = F.avg_pool2d(img1, (2, 2))
+                img2 = F.avg_pool2d(img2, (2, 2))
+
+            ssims = torch.stack(ssims)
+            mcs = torch.stack(mcs)
+
+            # Simple normalize (not compliant with original definition)
+            # TODO: remove support for normalize == True (kept for backward support)
+            if normalize == "simple" or normalize == True:
+                ssims = (ssims + 1) / 2
+                mcs = (mcs + 1) / 2
+
+            pow1 = mcs ** weights
+            # Remove nan if it in array
+            pow2 = ssims ** weights
+            # Remove nan if it in array
+
+            # From Matlab implementation https://ece.uwaterloo.ca/~z70wang/research/iwssim/
+            output = torch.prod(pow1[:-1]) * pow2[-1]
+            return output
+
+        def forward(self, img1, img2):
+            # TODO: store window between calls if possible
+            return self.msssim(img1, img2, windowSize=self.windowSize, sizeAverage=self.sizeAverage, valRange=self.valRange)
+
+    class Net(nn.Module):
+        # -----------------
+        #  Model information - based on Gan
+        # -----------------
+        # Input : Generate image from noise + input image dim
+        # Output : Random image from noise
+
+        def __init__(self, imgSize):
+            super().__init__()
+            # Inital size before making label Size: Batchsize x Labeldim
+            # Convolution Output (Inputsize + 2*padding - kernel) / stride
+            self.stamOutput = 256
+            # Initial size before upsampling
+            self.initSize = imgSize // 4
+            self.l1 = nn.Sequential(
+                # 128 Channel Numbers, self.initSize ** 2 Width, Height
+                nn.BatchNorm1d(self.stamOutput),
+                nn.Linear(256, 128 * self.initSize ** 2),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.25)
+            )
+
+            self.body = nn.Sequential(
+                nn.BatchNorm2d(128),
+                nn.Upsample(scale_factor=2),
+                nn.Conv2d(128, 128, 3, stride=1, padding=1),
+                nn.BatchNorm2d(128, 0.8),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Upsample(scale_factor=2),
+                nn.Conv2d(128, 64, 3, stride=1, padding=1),
+                nn.BatchNorm2d(64, 0.8),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Conv2d(64, 1, 3, stride=1, padding=1),
+                nn.Dropout(0.5),
+                nn.Sigmoid(),
+            )
+            # Make label from input x using convolution
+            # Output = 1 x labelDim
+            self.stam = nn.Sequential(
+                nn.Conv2d(1, 1, 3, stride=2, padding=1),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.25),
+
+                nn.BatchNorm2d(1),
+                nn.Conv2d(1, 1, 3, stride=2, padding=1),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.25),nn.Conv2d(1, 1, 3, stride=2, padding=1),
+
+                nn.BatchNorm2d(1),
+                nn.Conv2d(1, 1, 3, stride=2, padding=1),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.25),
+
+                nn.BatchNorm2d(1),
+                nn.Conv2d(1, 1, 3, stride=1, padding=1),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.25),
+
+                nn.BatchNorm2d(1),
+                nn.Conv2d(1, 1, 3, stride=1, padding=1),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.25),
+
+                nn.BatchNorm2d(1),
+                nn.Conv2d(1, 1, 3, stride=1, padding=1),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.25),
+
+                nn.BatchNorm2d(1),
+                nn.Conv2d(1, 1, 3, stride=1, padding=1),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.25),
+
+                nn.BatchNorm2d(1),
+                nn.Conv2d(1, 1, 3, stride=1, padding=1),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.25),
+
+            )
+
+            print("Successful loading: Net")
+
+        def forward(self, noise): # Labels input image
+            noise = self.stam(noise)
+            noise = noise.view([noise.shape[0], -1])
+            out = self.l1(noise)
+            out = out.view(out.shape[0], 128, self.initSize, self.initSize)
+            img = self.body(out)
+            return img
+
     def __init__(self):
         seed = 17 # Random seed
         os.environ['CUDA_LAUNCH_BLOCKING'] = "1" #
@@ -31,167 +176,140 @@ class MultiTargetDnn:
         torch.cuda.manual_seed(seed) #
         torch.backends.cudnn.deterministic = True #
 
+        self.size = 256
+        self.batchSize = 9
+        self.epochs = 300
+        self.learningRate = 0.0002
+        self.b1 = 0.5
+        self.b2 = 0.999
         self.preprocess = transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
+            transforms.Resize(self.size),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
-        self.encoder = torch.hub.load('pytorch/vision:v0.10.0', 'resnet152', pretrained=True) # Load Encoder
-        self.encoder.to('cuda') # Use cuda
-        self.self.drop = nn.Dropout(0.5)
-        print("Successful loading: MultiTargetDnn")
+        self.generator = self.Net(self.size)
+        self.generator.to('cuda') # Use cuda
+        self.generator.apply(self.initWeight)
+        self.criterion = self.MSSSIM().to('cuda')
+        self.trainPath = './binarys/'
+        self.testPath = './binarys_test/'
+        # self.validaton = []
+        self.datasetTrain = util.Dataset(dataDir=self.trainPath, transform=self.preprocess, seed=seed)
+        self.loaderTrain = DataLoader(self.datasetTrain, batch_size=self.batchSize, shuffle=True)
+        self.datasetTest = util.Dataset(dataDir=self.testPath, transform=self.preprocess, seed=seed)
+        self.loaderTest = DataLoader(self.datasetTest, batch_size=self.batchSize, shuffle=False)
 
-    def MakeBatch(self):
-        pass
+    def initWeight(self, m):
+        classname = m.__class__.__name__
+        if classname.find("Conv") != -1:
+            torch.nn.init.normal_(m.weight.data, 0.0, 0.02)
+        elif classname.find("BatchNorm2d") != -1:
+            torch.nn.init.normal_(m.weight.data, 1.0, 0.02)
+            torch.nn.init.constant_(m.bias.data, 0.0)
 
     def Train(self):
-        self.encoder.train()
+        self.generator.train()
+        self.writer = SummaryWriter()
+        bestLoss = -1
+        optimizer = optim.Adam(self.generator.parameters(), lr=self.learningRate)
+        # try:  # Load Saved Model
+        #     checkpoint = torch.load('best.model')
+        #     self.model.load_state_dict(checkpoint['model_state_dict'])
+        #     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        #     self.trainEpoch = checkpoint['epoch']
+        #     # loss = checkpoint['loss']
+        #     self.model.train()
+        #     # self.model.eval() for test
+        #     print('** Model save data is detected')
+        #     print('* Train Epoch:', self.trainEpoch)
+        # except:
+        #     pass
+        for epoch in range(self.epochs):
+            lossTotal = 0
+            idx = 1
+            for batch, data in enumerate(self.loaderTrain, 1): # Total / batchsize
+                if keyboard.is_pressed('F12'):
+                    torch.save({'epoch': epoch,
+                                'model_state_dict': self.generator.state_dict(),
+                                'optimizer_state_dict': optimizer.state_dict(),
+                                'loss': loss},
+                               'Maskgan.model')
+                    print('** Model is saved')
+                    self.writer.flush()
+                    self.writer.close()
+                    exit()
 
-class Annotator: # Make dataset by hand
-    def __init__(self, type):
-        print("Type : %s is selected"%(type))
-        pygame.init()
-        self.layout = Layout()
-        self.type = type
-        self.focusNow = -1 # default -1
-        self.index = 0 # Image page
-        self.coordList = []
-        self.framePerSec = pygame.time.Clock()
-        self.inputPath = './'+type
-        self.images = os.listdir(self.inputPath) # Load images
-        self.totalImages = len(self.images)
-        self.resultPath = './'+type+"/label"
-        if not os.path.isdir(self.resultPath):
-            os.mkdir(self.resultPath)
-        self.run()
+                # -----------------
+                #  Train Generator
+                # -----------------
+                optimizer.zero_grad()
+                train = data['input'].to('cuda')
+                output = self.generator(train)
+                target = torch.Tensor(data['target']).to('cuda')
+                target = target.type(torch.float32)
+                loss = self.criterion(output, target)
+                print('Train Epoch:', '%d' % (epoch), 'loss = %f' % (loss.item()))
+                lossTotal += loss.item()
 
-    def run(self):
-        display = pygame.display.set_mode((self.layout.width, self.layout.height))
-        pygame.display.set_caption(self.type)
-        if self.type == 'overlapping':
-            isOverlapVal = 'True'
-        elif self.type == 'notoverlapping':
-            isOverlapVal = 'False'
-        overlapNumval = "6"
+                loss.backward()
+                optimizer.step()
+                idx += 1
 
-        while True:
-            display.fill(self.layout.black)
-            image = self.images[self.index]
-            image = pygame.image.load(self.inputPath+'/'+image)
-            image = pygame.transform.scale(image, (self.layout.resize, self.layout.resize))
-            display.blit(image, [30, 40])
-            imageNumber = self.layout.font.render("Image: %d"%(self.index), True, self.layout.white)
-            isOverlapping = self.layout.font.render("Is overlap:", True, self.layout.white)
-            numOverlapping = self.layout.font.render("Num overlap:", True, self.layout.white) # Stop using
-            positions = self.layout.font.render("Positions:", True, self.layout.white)
-            edit1 = self.layout.font.render(isOverlapVal, True, self.layout.white)
-            edit2 = self.layout.font.render(overlapNumval, True, self.layout.white)
+            lossTotal = lossTotal/len(self.loaderTrain)
+            self.writer.add_scalar("Loss/Train", lossTotal, epoch)
 
-            display.blit(imageNumber, self.layout.label1)
-            display.blit(isOverlapping, self.layout.label2)
-            display.blit(numOverlapping, self.layout.label3)
-            display.blit(positions, self.layout.label4)
-            display.blit(edit1, self.layout.edit1)
-            display.blit(edit2, self.layout.edit2)
-            
-            for event in pygame.event.get(): # Evnet handler
-                if event.type == QUIT:
-                    pygame.quit()
-                    sys.exit()
+            lossTotal = 0
+            idx = 1
+            self.generator.eval()
+            with torch.no_grad():
+                for data in self.loaderTest:
+                    train = data['input'].to('cuda')
+                    output = self.generator(train)
+                    target = torch.Tensor(data['target']).to('cuda')
+                    target = target.type(torch.float32)
+                    loss = self.criterion(output, target)
+                    lossTotal += loss.item()
+                    print('Test Epoch:', '%d' % (idx+epoch), 'loss = %f' % (loss.item()))
+                    idx += 1
+                lossTotal = lossTotal/len(self.loaderTest)
+                self.writer.add_scalar("Loss/Test", lossTotal, epoch)
 
-                if event.type == pygame.KEYDOWN:
-                    if event.key == K_BACKSPACE:
-                        if self.focusNow == self.layout.edit1Idx:
-                            if len(isOverlapVal) > 0:
-                                isOverlapVal = isOverlapVal[:-1]
-                        elif self.focusNow == self.layout.edit2Idx:
-                            if len(overlapNumval) > 0:
-                                overlapNumval = overlapNumval[:-1]
-                        else:
-                            if not len(self.coordList) == 0:
-                                self.coordList = self.coordList[:-1]
-                    elif event.key == pygame.K_RIGHT:
-                        self.index = (self.index+1) % self.totalImages
-                    elif event.key == pygame.K_LEFT:
-                        if not self.index == 0:
-                            self.index -= 1
-                    elif event.key == pygame.K_DELETE:
-                        file = self.inputPath+'/'+self.images[self.index]
-                        os.remove(file)
-                        del self.images[self.index]
-                        self.totalImages = len(self.images)
-                    else:
-                        if self.focusNow == self.layout.edit1Idx:
-                            isOverlapVal += event.unicode
-                        elif self.focusNow == self.layout.edit2Idx:
-                            overlapNumval += event.unicode
+            self.generator.train()
 
-                if event.type == pygame.MOUSEBUTTONDOWN:
-                    if event.button == self.layout.leftButton:  # Left button
-                        pos = event.pos
-                        if self.layout.edit1Pos[0][0]<=pos[0]<=self.layout.edit1Pos[1][0] and self.layout.edit1Pos[0][1]<=pos[1]<=self.layout.edit1Pos[1][1]:
-                            self.focusNow = self.layout.edit1Idx
-                            cursor = self.layout.cursorEdit1
-                        elif self.layout.edit2Pos[0][0]<=pos[0]<=self.layout.edit2Pos[1][0] and self.layout.edit2Pos[0][1]<=pos[1]<=self.layout.edit2Pos[1][1]:
-                            self.focusNow = self.layout.edit2Idx
-                            cursor = self.layout.cursorEdit2
-                        else:
-                            self.focusNow = -1
-                        if 30<=pos[0]<=self.layout.resize+30 and 40<=pos[1]<=self.layout.resize+40:
-                            if not overlapNumval == '':
-                                if len(self.coordList) < int(overlapNumval):
-                                    self.coordList.append(pos)
+            if bestLoss == -1:  # Early Stopping
+                bestLoss = lossTotal
+            else:
+                if lossTotal < bestLoss:
+                    bestLoss = lossTotal
+                    torch.save({'epoch': epoch,
+                                'model_state_dict': self.generator.state_dict(),
+                                'optimizer_state_dict': optimizer.state_dict(),
+                                'loss': loss},
+                               'Maskgan_best.model')
+            if lossTotal > bestLoss * 1.1:
+                print('* Early Stopping')
+                break
 
-                    if event.button == self.layout.centerButton: # Center button
-                        resultName = "/%d.txt"%(self.index)
-                        if len(self.coordList) == 0:
-                            self.coordList = [(0,0)]
-                        result = {
-                            'image' : self.images[self.index],
-                            'Isoverlap' : bool(isOverlapVal), # True False
-                            'Count' : int(overlapNumval),
-                            'Pos' : self.coordList,
-                        }
-                        with open(self.resultPath+resultName, 'w') as file:
-                            json.dump(result, file)
-                        self.index = (self.index+1) % self.totalImages
-                        pygame.time.delay(70)
-                    if event.button == self.layout.backWheel: # Back wheel
-                        if not self.index == 0:
-                            self.index -= 1
+        torch.save({'epoch': epoch,
+                    'model_state_dict': self.generator.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'loss': loss},
+                   'Maskgan.model')
+        self.writer.flush()
+        self.writer.close()
+        print('** Model is saved')
 
-            if time.time() % 1 > 0.5:
-                if not self.focusNow == -1:
-                    pygame.draw.line(display, self.layout.white, cursor[0], cursor[1])
-            if not len(self.coordList) == 0:
-                standPos = self.layout.standPos
-                for idx, coordinate in enumerate(self.coordList):
-                    pygame.draw.circle(display, self.layout.red, coordinate, 10, 3)
-                    coordinateLabel = "Nubmer: %d Pos: %d %d"%(idx, coordinate[0], coordinate[1])
-                    label = self.layout.fontSmall.render(coordinateLabel, True, self.layout.white)
-                    display.blit(label, (standPos[0], standPos[1]+(40*idx)))
+    def RunTest(self):
+        checkpoint = torch.load('Maskgan.model')
+        self.generator.load_state_dict(checkpoint['model_state_dict'])
+        self.generator.eval()
+        with torch.no_grad():
+            for iteration, data in enumerate(self.loaderTest):
+                train = data['input'].to('cuda')
+                output = self.generator(train)
+                print(output.data)
+                exit()
+                # # output = output.astype(int)
+                # save_image(output.data, "binary_result/%d.png"%(iteration), nrow=self.batchSize, normalize=True)
 
-            pygame.display.flip() # Display update
-            self.framePerSec.tick(self.layout.fps)
-
-
-
-
-# image = Image.open('img.jpg').convert('RGB')
-# preprocess = transforms.Compose([
-#             transforms.Resize(672),
-#             transforms.CenterCrop(640),
-#             transforms.ToTensor(),
-#             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-#         ])
-# 
-# testTensor = preprocess(image).to('cuda')
-# testTensor = torch.unsqueeze(testTensor, 0)
-# encoder = resnet152()  # Load Encoder
-# encoder.to('cuda')  # Use cuda
-# encoder.eval()
-# result = encoder(testTensor)
-# print(result[0].shape)
-
-annotator = Annotator('notoverlapping')
+model = MultiTargetDnn()
+model.Train()

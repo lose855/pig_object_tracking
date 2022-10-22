@@ -3,15 +3,15 @@ import sys
 import pygame
 import pygame.gfxdraw
 from pygame.locals import *
+from PIL import Image
 from Layouts import Layout
 import cv2
 import datetime
 from detectors import RCF
 import numpy as np
 
-
 class Annotator:  # Make dataset by hand
-    def __init__(self, type):
+    def __init__(self, type, weight):
         print("Type : %s is selected" % (type))
         pygame.init()
         self.inputPath = './' + type
@@ -27,10 +27,11 @@ class Annotator:  # Make dataset by hand
         self.click = False
         self.thick = 5
         self.index = 0  # Image page
+        self.weight = weight
         self.totalImages = len(self.images)
         self.framePerSec = pygame.time.Clock()
         self.edgeDetect = RCF(device='cuda')
-        self.run()
+        # self.run()
 
     def clear(self):
         self.memory = []
@@ -71,6 +72,7 @@ class Annotator:  # Make dataset by hand
                 display.blit(image, [self.layout.img1Idx[x], self.layout.img1Idx[y]])
                 display.blit(result, [self.layout.img2Idx[x], self.layout.img2Idx[y]])
                 pygame.display.flip()
+                print("\n Image: %d"%(self.index), end='\n')
                 self.isFirst = False
 
             if pygame.mouse.get_pressed() == (0, 0, 1):
@@ -155,9 +157,9 @@ class Annotator:  # Make dataset by hand
                     elif event.button == self.layout.centerButton:  # Center button
                         if not len(self.memory) == 0:
                             resultName = "/%d.%s"
-                            pygame.image.save(image, self.resultPath + '/' + resultName%(self.index, 'jpg'))
-                            pygame.image.save(result, self.resultPath + resultName%(self.index, 'png'))
-                            print('Saved image')
+                            pygame.image.save(image, self.resultPath + '/' + resultName%(self.index+self.weight, 'jpg'))
+                            pygame.image.save(result, self.resultPath + resultName%(self.index+self.weight, 'png'))
+                            print('\nSaved image')
                         self.index = (self.index + 1) % self.totalImages
                         self.clear()
 
@@ -174,6 +176,16 @@ class Annotator:  # Make dataset by hand
             pygame.display.flip()  # Display update
             self.framePerSec.tick(self.layout.fps)
 
+    def cleaner(self, paths):
+        for path in paths:
+            lisImage = os.listdir(path)
+            for name in lisImage:
+                image = cv2.imread(path+'/'+name)
+                kernel = np.ones((3, 3), np.uint8)
+                result = cv2.dilate(image, kernel, iterations=10)
+                show = Image.fromarray(result)
+                show.save(path+'/'+name)
+a = Annotator("sample-binary", 30)
+a.cleaner(['./binarys/target', './binarys_test/target'])
 
-a = Annotator("overlapping")
-a.run()
+
