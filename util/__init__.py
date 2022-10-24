@@ -5,15 +5,14 @@ import sys
 from Layouts import Layout
 from pygame.locals import *
 from PIL import Image
-import numpy as np
 import random
-from numpy import asarray
 
 
 class Dataset(torch.utils.data.Dataset):
-    def __init__(self, dataDir, transform=None, seed=None):
+    def __init__(self, dataDir, transform=None, transformTarget=None, seed=None):
         self.dataDir = dataDir
         self.transform = transform
+        self.transformTarget = transformTarget
         self.seed = seed
         random.seed(seed)
         self.dataDirTarget = self.dataDir + 'target/'
@@ -29,23 +28,22 @@ class Dataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         target = Image.open(self.dataDirTarget + self.lstTarget[index])
-        target = Image.Image.split(target)[0] # RGB using Red
+        target = Image.Image.split(target)[0]
+        # RGB using Red
         # target = Image.Image.resize(target, (256, 256))
         # target = np.where(target == 255, random.uniform(0.5, 1.0), random.uniform(0.0, 0.49)) # Threshhold value 0.5
         input = Image.open(self.dataDir + self.lstInput[index])
-        input = Image.Image.split(input)[0]
         # if target.ndim == 2:
         #     target = target[:, :, np.newaxis]
         # if input.ndim == 2:
         #     input = input[:, :, np.newaxis]
 
         data = {'input': input, 'target': target}
-
         if self.transform:
             torch.manual_seed(self.seed)
             data['input'] = self.transform(data['input'])
 
-        if self.transform:
+        if self.transformTarget:
             torch.manual_seed(self.seed)
             data['target'] = self.transform(data['target'])
 

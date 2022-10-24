@@ -9,8 +9,7 @@ class Layout:
         self.resize = 640
         self.edit1Idx = 1
         self.edit2Idx = 2
-        self.img1Idx = (0, 0)
-        self.img2Idx = (640, 0)
+        self.imgIdx = (0, 0)
         #Contorls
         #Mousecode
         self.leftButton = 1

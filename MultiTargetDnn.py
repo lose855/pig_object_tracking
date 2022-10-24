@@ -1,12 +1,11 @@
 import torch
 import torch.nn as nn
 from torchvision import transforms
-from PIL import Image
 from torch.utils.data import DataLoader
 import pytorch_msssim
 import os
 import util
-from torchvision.utils import save_image
+from torchvision.models import resnet152, resnet18, resnet34
 import warnings
 import torch.nn.functional as F
 import numpy as np
@@ -82,78 +81,85 @@ class MultiTargetDnn:
         # Input : Generate image from noise + input image dim
         # Output : Random image from noise
 
-        def __init__(self, imgSize):
+        def __init__(self, imgSize, noiseDim):
             super().__init__()
             # Inital size before making label Size: Batchsize x Labeldim
             # Convolution Output (Inputsize + 2*padding - kernel) / stride
-            self.stamOutput = 256
             # Initial size before upsampling
             self.initSize = imgSize // 4
             self.l1 = nn.Sequential(
                 # 128 Channel Numbers, self.initSize ** 2 Width, Height
-                nn.BatchNorm1d(self.stamOutput),
-                nn.Linear(256, 128 * self.initSize ** 2),
+                nn.BatchNorm1d(noiseDim),
+                nn.Linear(noiseDim, 256 * self.initSize ** 2),
                 nn.ReLU(inplace=True),
-                nn.Dropout(0.25)
+                nn.Dropout(0.5)
             )
 
             self.body = nn.Sequential(
-                nn.BatchNorm2d(128),
+                nn.BatchNorm2d(256),
                 nn.Upsample(scale_factor=2),
-                nn.Conv2d(128, 128, 3, stride=1, padding=1),
+                nn.Conv2d(256, 256, 3, stride=1, padding=1),
+                nn.BatchNorm2d(256, 0.8),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Upsample(scale_factor=2),
+                nn.Conv2d(256, 128, 3, stride=1, padding=1),
                 nn.BatchNorm2d(128, 0.8),
                 nn.LeakyReLU(0.2, inplace=True),
-                nn.Upsample(scale_factor=2),
-                nn.Conv2d(128, 64, 3, stride=1, padding=1),
-                nn.BatchNorm2d(64, 0.8),
-                nn.LeakyReLU(0.2, inplace=True),
-                nn.Conv2d(64, 1, 3, stride=1, padding=1),
+                nn.Conv2d(128, 1, 3, stride=1, padding=1),
                 nn.Dropout(0.5),
                 nn.Sigmoid(),
             )
+
+            self.stam = resnet152(weights=None)
+            features = self.stam.fc.in_features
+            self.stam.fc = nn.Sequential(
+                nn.Dropout(0.5),
+                nn.Linear(features, noiseDim)
+            )
+
             # Make label from input x using convolution
             # Output = 1 x labelDim
-            self.stam = nn.Sequential(
-                nn.Conv2d(1, 1, 3, stride=2, padding=1),
-                nn.ReLU(inplace=True),
-                nn.Dropout(0.25),
-
-                nn.BatchNorm2d(1),
-                nn.Conv2d(1, 1, 3, stride=2, padding=1),
-                nn.ReLU(inplace=True),
-                nn.Dropout(0.25),nn.Conv2d(1, 1, 3, stride=2, padding=1),
-
-                nn.BatchNorm2d(1),
-                nn.Conv2d(1, 1, 3, stride=2, padding=1),
-                nn.ReLU(inplace=True),
-                nn.Dropout(0.25),
-
-                nn.BatchNorm2d(1),
-                nn.Conv2d(1, 1, 3, stride=1, padding=1),
-                nn.ReLU(inplace=True),
-                nn.Dropout(0.25),
-
-                nn.BatchNorm2d(1),
-                nn.Conv2d(1, 1, 3, stride=1, padding=1),
-                nn.ReLU(inplace=True),
-                nn.Dropout(0.25),
-
-                nn.BatchNorm2d(1),
-                nn.Conv2d(1, 1, 3, stride=1, padding=1),
-                nn.ReLU(inplace=True),
-                nn.Dropout(0.25),
-
-                nn.BatchNorm2d(1),
-                nn.Conv2d(1, 1, 3, stride=1, padding=1),
-                nn.ReLU(inplace=True),
-                nn.Dropout(0.25),
-
-                nn.BatchNorm2d(1),
-                nn.Conv2d(1, 1, 3, stride=1, padding=1),
-                nn.ReLU(inplace=True),
-                nn.Dropout(0.25),
-
-            )
+            # self.stam = nn.Sequential(
+            #     nn.Conv2d(1, 1, 3, stride=2, padding=1),
+            #     nn.ReLU(inplace=True),
+            #     nn.Dropout(0.25),
+            #
+            #     nn.BatchNorm2d(1),
+            #     nn.Conv2d(1, 1, 3, stride=2, padding=1),
+            #     nn.ReLU(inplace=True),
+            #     nn.Dropout(0.25),nn.Conv2d(1, 1, 3, stride=2, padding=1),
+            #
+            #     nn.BatchNorm2d(1),
+            #     nn.Conv2d(1, 1, 3, stride=2, padding=1),
+            #     nn.ReLU(inplace=True),
+            #     nn.Dropout(0.25),
+            #
+            #     nn.BatchNorm2d(1),
+            #     nn.Conv2d(1, 1, 3, stride=1, padding=1),
+            #     nn.ReLU(inplace=True),
+            #     nn.Dropout(0.25),
+            #
+            #     nn.BatchNorm2d(1),
+            #     nn.Conv2d(1, 1, 3, stride=1, padding=1),
+            #     nn.ReLU(inplace=True),
+            #     nn.Dropout(0.25),
+            #
+            #     nn.BatchNorm2d(1),
+            #     nn.Conv2d(1, 1, 3, stride=1, padding=1),
+            #     nn.ReLU(inplace=True),
+            #     nn.Dropout(0.25),
+            #
+            #     nn.BatchNorm2d(1),
+            #     nn.Conv2d(1, 1, 3, stride=1, padding=1),
+            #     nn.ReLU(inplace=True),
+            #     nn.Dropout(0.25),
+            #
+            #     nn.BatchNorm2d(1),
+            #     nn.Conv2d(1, 1, 3, stride=1, padding=1),
+            #     nn.ReLU(inplace=True),
+            #     nn.Dropout(0.25),
+            #
+            # )
 
             print("Successful loading: Net")
 
@@ -161,7 +167,7 @@ class MultiTargetDnn:
             noise = self.stam(noise)
             noise = noise.view([noise.shape[0], -1])
             out = self.l1(noise)
-            out = out.view(out.shape[0], 128, self.initSize, self.initSize)
+            out = out.view(out.shape[0], 256, self.initSize, self.initSize)
             img = self.body(out)
             return img
 
@@ -176,26 +182,32 @@ class MultiTargetDnn:
         torch.cuda.manual_seed(seed) #
         torch.backends.cudnn.deterministic = True #
 
-        self.size = 256
-        self.batchSize = 9
-        self.epochs = 300
+        self.size = 112
+        self.sizeTarget = 320
+        self.batchSize = 13
+        self.epochs = 500
         self.learningRate = 0.0002
         self.b1 = 0.5
         self.b2 = 0.999
+        self.noiseDim = 300
         self.preprocess = transforms.Compose([
             transforms.Resize(self.size),
             transforms.ToTensor(),
         ])
-        self.generator = self.Net(self.size)
+        self.preprocessTarget = transforms.Compose([
+            transforms.Resize(self.sizeTarget),
+            transforms.ToTensor(),
+        ])
+        self.generator = self.Net(self.size, self.noiseDim)
         self.generator.to('cuda') # Use cuda
-        self.generator.apply(self.initWeight)
+        # self.generator.apply(self.initWeight)
         self.criterion = self.MSSSIM().to('cuda')
         self.trainPath = './binarys/'
         self.testPath = './binarys_test/'
         # self.validaton = []
-        self.datasetTrain = util.Dataset(dataDir=self.trainPath, transform=self.preprocess, seed=seed)
+        self.datasetTrain = util.Dataset(dataDir=self.trainPath, transform=self.preprocess, transformTarget=self.preprocessTarget, seed=seed)
         self.loaderTrain = DataLoader(self.datasetTrain, batch_size=self.batchSize, shuffle=True)
-        self.datasetTest = util.Dataset(dataDir=self.testPath, transform=self.preprocess, seed=seed)
+        self.datasetTest = util.Dataset(dataDir=self.testPath, transform=self.preprocess, transformTarget=self.preprocessTarget, seed=seed)
         self.loaderTest = DataLoader(self.datasetTest, batch_size=self.batchSize, shuffle=False)
 
     def initWeight(self, m):
